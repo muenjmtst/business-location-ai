@@ -231,3 +231,8 @@ cache/
 # macOS
 .DS_Store
 
+
+data/raw/*.osm.pbf
+
+data/raw/
+data/processed/

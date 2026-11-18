@@ -236,3 +236,4 @@ data/raw/*.osm.pbf
 
 data/raw/
 data/processed/
+.env

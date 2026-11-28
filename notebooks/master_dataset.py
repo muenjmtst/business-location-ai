@@ -39,6 +39,7 @@ CRS_METRIC = "EPSG:32643"
 N_CANDIDATES = 2822
 XY_ATOL_M = 0.01
 MASTER_DIR = Path("data/processed/master")
+CANDIDATES_PATH = "data/processed/candidate_locations_with_ids.gpkg"
 BASE_COLUMNS = ("candidate_id", "x", "y", "lon", "lat", "geometry")
 
 
@@ -68,7 +69,7 @@ FEATURE_SOURCES = (
     FeatureSource("dgis_demand", "data/processed/features/dgis_demand_features.csv", "03_2gis_demand_layers",
                   description="Слои спроса по 2ГИС: БЦ, пекарни, фитнес, вузы, ТЦ, кофейные автоматы"),
 )
-DISTRICTS_PATH = "data/processed/almaty_districts.parquet"            # 03_district_spatial_join (границы)
+DISTRICTS_PATH = "data/processed/almaty_districts_with_stats.parquet"            # 03_district_spatial_join (границы)
 DISTRICT_STATS_PATH = "data/processed/almaty_district_stats.csv"      # 03_statgov_exploration (статистика)
 DISTRICT_TECHNICAL = ("OBJECTID", "GlobalID", "Shape__Area", "Shape__Length")
 BOUNDARY_PATH = "data/processed/almaty_boundary.gpkg"
@@ -120,18 +121,30 @@ def read_table(path):
 
 
 def load_candidates(root, expected=N_CANDIDATES):
-    grid = gpd.read_file(Path(root) / "data/processed/candidate_locations.gpkg")
+    grid = gpd.read_file(Path(root) / CANDIDATES_PATH)
+
     if "candidate_id" not in grid.columns:
-        raise MasterBuildError("В candidate_locations.gpkg нет candidate_id — пересоберите сетку через 02.")
+        raise MasterBuildError("В сетке нет candidate_id.")
+
     grid = grid[["candidate_id", "geometry"]].to_crs(CRS_METRIC)
+
     if expected is not None and len(grid) != expected:
-        raise MasterBuildError(f"В сетке {len(grid)} точек, ожидалось {expected}.")
+        raise MasterBuildError(
+            f"В сетке {len(grid)} точек, ожидалось {expected}."
+        )
+
     if not grid["candidate_id"].is_unique or not (grid.geom_type == "Point").all():
-        raise MasterBuildError("candidate_id должен быть уникален, геометрия — точки.")
+        raise MasterBuildError(
+            "candidate_id должен быть уникален, геометрия — точки."
+        )
+
     grid = grid.sort_values("candidate_id").reset_index(drop=True)
+
     grid["x"], grid["y"] = grid.geometry.x, grid.geometry.y
+
     lonlat = grid.geometry.to_crs("EPSG:4326")
     grid["lon"], grid["lat"] = lonlat.x, lonlat.y
+
     return grid[list(BASE_COLUMNS)]
 
 
@@ -426,8 +439,9 @@ def build_master(root, *, sources=FEATURE_SOURCES, expected=N_CANDIDATES, write=
     root = Path(root)
     candidates = load_candidates(root, expected)
     frames, reports, skipped, inputs = {}, [], {}, {}
-    inputs["data/processed/candidate_locations.gpkg"] = {"sha256": sha256_file(root / "data/processed/candidate_locations.gpkg"),
-                                                         "rows": len(candidates)}
+    inputs[CANDIDATES_PATH] = {
+    "sha256": sha256_file(root / CANDIDATES_PATH),
+    "rows": len(candidates)}
     for source in sources:
         path = root / source.path
         if not path.is_file():
@@ -447,7 +461,7 @@ def build_master(root, *, sources=FEATURE_SOURCES, expected=N_CANDIDATES, write=
             inputs[DISTRICT_STATS_PATH] = {"sha256": sha256_file(root / DISTRICT_STATS_PATH), "rows": len(stats)}
         else:
             skipped["district_stats"] = f"нет {DISTRICT_STATS_PATH} (создаёт 03_statgov_exploration из Excel stat.gov.kz)"
-        dim_district = build_district_table(districts, stats)
+        dim_district = build_district_table(districts, stats=None)
         district_frame = district_features(assign_districts(candidates, districts), dim_district)
         frames["district"] = district_frame
     else:
